@@ -17,7 +17,7 @@ your current directory, so paths work the same on both sides. Only `127.0.0.1` i
 
 | Kind | Command | What the app sees |
 |---|---|---|
-| Text / terminal | `sim term CMD…` (idle: `sim console`, a shell) | a 120×20 terminal with an 8×16 bitmap font — the grid fbcon gives on 960×320 |
+| Text / terminal | `sim term [-s PX] CMD…` (idle: `sim console`, a shell) | a terminal in Terminus **32 px (60×10, 3.7 mm tall)** by default — the size picked as readable on the panel with `software/demos/eyechart`; `-s 24` gives 80×13, `-s 16` the 120×20 fbcon default. On the device: `setfont ter-v32n` (console-terminus). Installed: htop, nano, mc, tmux, cmatrix, figlet, w3m, bc |
 | Raw framebuffer | `sim fb CMD…` | `/dev/fb0`: 960×320, 16 bpp RGB565 (`ZMFB_BPP=32` for XRGB8888), `mmap`, `FBIOGET_*`, `FBIO_WAITFORVSYNC`; keys arrive on stdin like a VT |
 | SDL2 (or any X11) | `sim sdl CMD…` | an X display of exactly 960×320, no window manager (like KMS on the device); size windows 960×320 or use `SDL_WINDOW_FULLSCREEN*` |
 

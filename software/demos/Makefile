@@ -2,11 +2,12 @@
 #   ../../tools/sim/sim sdl life/bin/life       Game of Life, 240x80 cells, colour by age
 #   ../../tools/sim/sim sdl clock/bin/clock     big LED pixel clock
 #   ../../tools/sim/sim term python3 dash/dash.py   text-mode dashboard (curses, 120x20)
+#   ../../tools/sim/sim sdl eyechart/bin/eyechart   font sizes on the panel (pick a console font)
 #   ./playlist                                  all of them (and fbdemo) in turn
 CFLAGS ?= -O2 -Wall -Wextra
 SDL    = $(shell pkg-config --cflags --libs sdl2)
 
-all: life/bin/life clock/bin/clock
+all: life/bin/life clock/bin/clock eyechart/bin/eyechart
 
 life/bin/life: life/life.c
 	mkdir -p $(@D); $(CC) $(CFLAGS) -o $@ $< $(SDL)
@@ -14,6 +15,9 @@ life/bin/life: life/life.c
 clock/bin/clock: clock/clock.c ../fbdemo/font8x8_basic.h
 	mkdir -p $(@D); $(CC) $(CFLAGS) -o $@ $< $(SDL) -lm
 
+eyechart/bin/eyechart: eyechart/eyechart.c
+	mkdir -p $(@D); $(CC) $(CFLAGS) -o $@ $< -lX11
+
 clean:
-	rm -rf life/bin clock/bin
+	rm -rf life/bin clock/bin eyechart/bin
 .PHONY: all clean

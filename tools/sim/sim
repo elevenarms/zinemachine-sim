@@ -51,7 +51,7 @@ case $c in
   watch)   running || up; docker exec -it -w "$(workdir)" "$NAME" zm watch "$@" ;;
   logs)    running || up; if [ "${1:-}" = -f ]; then docker exec -it "$NAME" zm logs -f; else docker exec "$NAME" zm logs; fi ;;
   console|term|fb|sdl|stop|status)
-           running || up; docker exec -w "$(workdir)" "$NAME" zm "$c" "$@" ;;
+           running || up; docker exec -e "ZM_FONT=${ZM_FONT:-32}" -w "$(workdir)" "$NAME" zm "$c" "$@" ;;
   help|-h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; running && docker exec "$NAME" zm help || true ;;
   *) echo "sim: unknown command $c" >&2; exit 2 ;;
 esac

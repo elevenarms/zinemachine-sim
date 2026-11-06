@@ -1,8 +1,9 @@
 #!/bin/bash
 # zm: put an app on the simulated 960x320 bar display (inside the zm-sim container).
 #
-#   zm console              idle text console (shell), like the device's fbcon: 120x20, 8x16 font
-#   zm term CMD...          text app in that console (window kept after it exits)
+#   zm console [-s PX]      idle text console (shell); Terminus PX px tall (default $ZM_FONT or 32, 60x10):
+#                           12:160x26 14:120x22 16:120x20 18:96x17 20:96x16 22:87x14 24:80x13 28:68x11 32:60x10
+#   zm term [-s PX] CMD...  text app in that console (window kept after it exits)
 #   zm fb CMD...            framebuffer app: /dev/fb0 is 960x320 RGB565 (LD_PRELOAD shim, needs a
 #                           dynamically linked binary); keys go to its stdin like a VT
 #   zm sdl CMD...           SDL2 (or any X11) app, full screen
@@ -15,7 +16,7 @@
 set -u
 D=/tmp/zm; mkdir -p "$D"
 LOG=$D/app.log; PIDF=$D/app.pid; ST=$D/status.json
-FONT='-*-terminus-medium-r-normal--16-*-*-*-c-80-iso10646-1'
+ZM_FONT=${ZM_FONT:-32}
 export DISPLAY=${DISPLAY:-:0}
 
 json_str() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"; }
@@ -60,11 +61,22 @@ start() {
   disown
 }
 
-XT=(xterm -geometry 120x20+0+0 -fn "$FONT" -bg black -fg '#aaaaaa' -cr '#aaaaaa'
-    -bw 0 -b 0 +sb -xrm 'XTerm*allowWindowOps:true')
+# xterm filling the 960x320 display with Terminus at $1 px (the device's console would use the
+# same fonts: setfont ter-v24n etc. from console-terminus)
+xterm_for() {
+  local px=$1 cw
+  case $px in 12) cw=6;; 14|16) cw=8;; 18|20) cw=10;; 22) cw=11;; 24) cw=12;; 28) cw=14;; 32) cw=16;;
+    *) echo "zm: font size $px not one of 12 14 16 18 20 22 24 28 32" >&2; exit 2;; esac
+  XT=(xterm -geometry "$((960 / cw))x$((320 / px))+0+0"
+      -fn "-*-terminus-medium-r-normal--$px-*-*-*-c-$((cw * 10))-iso10646-1"
+      -bg black -fg '#aaaaaa' -cr '#aaaaaa' -bw 0 -b 0 +sb -xrm 'XTerm*allowWindowOps:true')
+}
+font_opt() { if [ "${1:-}" = -s ]; then ZM_FONT=$2; return 0; fi; return 1; }
 
-cmd_console() { start console "shell" "${XT[@]}" -title console -e bash -l; }
-cmd_term()    { [ $# -gt 0 ] || usage; start term "$*" "${XT[@]}" -hold -title "$1" -e "$@"; }
+cmd_console() { font_opt "$@" && shift 2; xterm_for "$ZM_FONT"
+                start console "shell (${ZM_FONT}px)" "${XT[@]}" -title console -e bash -l; }
+cmd_term()    { font_opt "$@" && shift 2; [ $# -gt 0 ] || usage; xterm_for "$ZM_FONT"
+                start term "$*" "${XT[@]}" -hold -title "$1" -e "$@"; }
 cmd_fb()      { [ $# -gt 0 ] || usage; start fb "$*" zmfb-run -- "$@"; }
 cmd_sdl()     { [ $# -gt 0 ] || usage; start sdl "$*" "$@"; }
 cmd_stop()    { stop_app; cmd_console; }
@@ -106,6 +118,7 @@ cmd_watch() {
           cat "$D/build.log"
           cp "$D/build.log" "$D/build-failed.log"
           printf '\n=== %s  build failed\n' "$(date +%T)" >> "$LOG"; cat "$D/build.log" >> "$LOG"
+          xterm_for 16
           start term "build failed" "${XT[@]}" -hold -title "build failed" -fg '#ff6060' \
                 -e bash -c "echo 'BUILD FAILED: $build'; echo; cat '$D/build-failed.log'"
           status build-failed "$mode" "$build"
@@ -120,7 +133,7 @@ cmd_watch() {
   done
 }
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 [ $# -gt 0 ] || usage
 c=$1; shift
