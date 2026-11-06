@@ -1,0 +1,23 @@
+#!/bin/bash
+# Container entrypoint: the 960x320 display, VNC, the web page, and the idle console.
+set -u
+mkdir -p /tmp/zm
+: > /tmp/zm/app.log
+ln -sf /tmp/zm/app.log /opt/zm/www/app.log
+ln -sf /tmp/zm/status.json /opt/zm/www/status.json
+
+# 16-bit depth = RGB565, as the panel is driven
+Xvfb :0 -screen 0 960x320x16 -nolisten tcp -dpi 221 >/tmp/zm/xvfb.log 2>&1 &
+for _ in $(seq 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
+
+# No window manager: every app window is 960x320 at 0,0 (a WM's fullscreen handshake hung
+# SDL2's SDL_WINDOW_FULLSCREEN*), and the default PointerRoot focus sends keys to it.
+
+x11vnc -display :0 -localhost -rfbport 5900 -forever -shared -nopw -quiet \
+       -noxrecord -noxfixes -noxdamage -wait 8 -defer 8 >/tmp/zm/vnc.log 2>&1 &
+
+websockify --web /opt/zm/www 6080 localhost:5900 >/tmp/zm/web.log 2>&1 &
+
+zm console
+echo "zm-sim ready: http://127.0.0.1:6080/"
+wait

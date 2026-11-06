@@ -1,0 +1,131 @@
+#!/bin/bash
+# zm: put an app on the simulated 960x320 bar display (inside the zm-sim container).
+#
+#   zm console              idle text console (shell), like the device's fbcon: 120x20, 8x16 font
+#   zm term CMD...          text app in that console (window kept after it exits)
+#   zm fb CMD...            framebuffer app: /dev/fb0 is 960x320 RGB565 (LD_PRELOAD shim, needs a
+#                           dynamically linked binary); keys go to its stdin like a VT
+#   zm sdl CMD...           SDL2 (or any X11) app, full screen
+#   zm stop                 stop the app, back to the console
+#   zm watch -m MODE [-b 'BUILD'] [-p PATH]... -- CMD...
+#                           rebuild with BUILD and rerun CMD whenever files under PATH (default .)
+#                           change; build errors are shown on the display
+#   zm logs [-f]            the app's output
+#   zm status               what is on the display
+set -u
+D=/tmp/zm; mkdir -p "$D"
+LOG=$D/app.log; PIDF=$D/app.pid; ST=$D/status.json
+FONT='-*-terminus-medium-r-normal--16-*-*-*-c-80-iso10646-1'
+export DISPLAY=${DISPLAY:-:0}
+
+json_str() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"; }
+status() {  # state mode cmd [rc]
+  printf '{"state":"%s","mode":"%s","cmd":%s,"rc":%s,"cwd":%s,"time":%s}\n' \
+    "$1" "$2" "$(json_str "$3")" "${4:-null}" "$(json_str "$PWD")" "$(date +%s)" > "$ST.tmp" && mv "$ST.tmp" "$ST"
+}
+
+stop_app() {
+  [ -f "$PIDF" ] || return 0
+  local pid; pid=$(cat "$PIDF"); rm -f "$PIDF"
+  kill -TERM -- "-$pid" 2>/dev/null || return 0
+  for _ in $(seq 20); do kill -0 -- "-$pid" 2>/dev/null || return 0; sleep 0.1; done
+  kill -KILL -- "-$pid" 2>/dev/null; true
+}
+
+# start "$mode" "$label" CMD... : run CMD in its own session, log it, record its end
+start() {
+  local mode=$1 label=$2; shift 2
+  stop_app
+  # ZM_QUIET: the console coming back after an app ended; keep the app's status and log
+  if [ -z "${ZM_QUIET:-}" ]; then
+    printf '\n=== %s  %s: %s\n' "$(date +%T)" "$mode" "$label" >> "$LOG"
+    status running "$mode" "$label"
+  fi
+  (
+    setsid "$@" >> "$LOG" 2>&1 < /dev/null &
+    child=$!
+    echo "$child" > "$PIDF"
+    wait "$child"; rc=$?
+    # only report if we were not replaced meanwhile
+    if [ "$(cat "$PIDF" 2>/dev/null)" = "$child" ]; then
+      rm -f "$PIDF"
+      if [ -z "${ZM_QUIET:-}" ]; then
+        status exited "$mode" "$label" "$rc"
+        printf '=== %s  exited %s\n' "$(date +%T)" "$rc" >> "$LOG"
+      fi
+      # a framebuffer/SDL app leaves the display empty: show the console again
+      case $mode in fb|sdl) ZM_QUIET=1 "$0" console ;; esac
+    fi
+  ) &
+  disown
+}
+
+XT=(xterm -geometry 120x20+0+0 -fn "$FONT" -bg black -fg '#aaaaaa' -cr '#aaaaaa'
+    -bw 0 -b 0 +sb -xrm 'XTerm*allowWindowOps:true')
+
+cmd_console() { start console "shell" "${XT[@]}" -title console -e bash -l; }
+cmd_term()    { [ $# -gt 0 ] || usage; start term "$*" "${XT[@]}" -hold -title "$1" -e "$@"; }
+cmd_fb()      { [ $# -gt 0 ] || usage; start fb "$*" zmfb-run -- "$@"; }
+cmd_sdl()     { [ $# -gt 0 ] || usage; start sdl "$*" "$@"; }
+cmd_stop()    { stop_app; cmd_console; }
+
+cmd_logs() { if [ "${1:-}" = -f ]; then tail -n 50 -f "$LOG"; else tail -n 200 "$LOG"; fi; }
+cmd_status() { cat "$ST" 2>/dev/null || echo '{}'; }
+
+# fingerprint of the watched files (polling: works on Docker Desktop bind mounts without inotify)
+stamp() {
+  find "$@" -type f \
+    -not -path '*/.git/*' -not -path '*/bin/*' -not -path '*/build/*' \
+    -not -name '*.o' -not -name '*~' -not -name '.*.swp' \
+    -printf '%T@ %s %p\n' 2>/dev/null | sort | md5sum
+}
+
+cmd_watch() {
+  local mode="" build="" paths=()
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -m) mode=$2; shift 2 ;;
+      -b) build=$2; shift 2 ;;
+      -p) paths+=("$2"); shift 2 ;;
+      --) shift; break ;;
+      *) break ;;
+    esac
+  done
+  [ -n "$mode" ] && [ $# -gt 0 ] || usage
+  case $mode in fb|sdl|term) ;; *) echo "zm watch: -m fb|sdl|term" >&2; exit 2 ;; esac
+  [ ${#paths[@]} -gt 0 ] || paths=(.)
+  echo "zm watch: $mode '$*' (build: ${build:-none}) on ${paths[*]} — Ctrl-C to stop"
+  local last="" now
+  while :; do
+    now=$(stamp "${paths[@]}")
+    if [ "$now" != "$last" ]; then
+      last=$now
+      if [ -n "$build" ]; then
+        echo "--- $(date +%T) build: $build"
+        if ! bash -c "$build" > "$D/build.log" 2>&1; then
+          cat "$D/build.log"
+          cp "$D/build.log" "$D/build-failed.log"
+          printf '\n=== %s  build failed\n' "$(date +%T)" >> "$LOG"; cat "$D/build.log" >> "$LOG"
+          start term "build failed" "${XT[@]}" -hold -title "build failed" -fg '#ff6060' \
+                -e bash -c "echo 'BUILD FAILED: $build'; echo; cat '$D/build-failed.log'"
+          status build-failed "$mode" "$build"
+          sleep 0.5; continue
+        fi
+        tail -n 3 "$D/build.log"
+      fi
+      echo "--- $(date +%T) run: $*"
+      "cmd_$mode" "$@"
+    fi
+    sleep 0.5
+  done
+}
+
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+[ $# -gt 0 ] || usage
+c=$1; shift
+case $c in
+  console|term|fb|sdl|stop|watch|logs|status) "cmd_$c" "$@" ;;
+  -h|--help|help) usage ;;
+  *) echo "zm: unknown command $c" >&2; usage ;;
+esac

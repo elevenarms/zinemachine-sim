@@ -1,0 +1,56 @@
+#!/bin/bash
+# sim: the Zine Machine display simulator on this Mac (Docker), see tools/sim/README.md.
+#
+#   tools/sim/sim up            build the image if needed, start the container, open the page
+#   tools/sim/sim down          stop it
+#   tools/sim/sim rebuild       rebuild the image (after changing tools/sim) and restart
+#   tools/sim/sim open          open http://127.0.0.1:6080/
+#   tools/sim/sim shell         a shell in the container (cwd = your cwd in the repo)
+#   tools/sim/sim <zm command>  console | term | fb | sdl | stop | watch | logs | status  (see `sim help`)
+#
+# The repo is mounted at /work; commands run in the container directory matching your cwd.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+repo=$(cd "$here/../.." && pwd)
+NAME=${ZM_SIM_NAME:-zm-sim}
+IMAGE=${ZM_SIM_IMAGE:-zm-sim:latest}
+PORT=${ZM_SIM_PORT:-6080}
+URL="http://127.0.0.1:$PORT/"
+
+running() { [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = true ]; }
+
+# the container path for the caller's cwd (repo root if outside the repo)
+workdir() {
+  case $PWD/ in
+    "$repo"/*) echo "/work${PWD#"$repo"}" ;;
+    *) echo /work ;;
+  esac
+}
+
+build() { docker build -t "$IMAGE" "$here"; }
+
+up() {
+  docker image inspect "$IMAGE" >/dev/null 2>&1 || build
+  if ! running; then
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+    docker run -d --name "$NAME" --init --shm-size=256m \
+      -p "127.0.0.1:$PORT:6080" -v "$repo:/work" "$IMAGE" >/dev/null
+    for _ in $(seq 50); do curl -fs "$URL" >/dev/null 2>&1 && break; sleep 0.2; done
+  fi
+  echo "zm-sim: $URL  (repo mounted at /work)"
+}
+
+c=${1:-help}; [ $# -gt 0 ] && shift
+case $c in
+  up)      up; [ "${ZM_SIM_NOOPEN:-}" ] || open "$URL" 2>/dev/null || true ;;
+  down)    docker rm -f "$NAME" >/dev/null 2>&1 && echo stopped || echo "not running" ;;
+  rebuild) build; docker rm -f "$NAME" >/dev/null 2>&1 || true; up ;;
+  open)    open "$URL" ;;
+  shell)   running || up; docker exec -it -w "$(workdir)" "$NAME" bash -l ;;
+  watch)   running || up; docker exec -it -w "$(workdir)" "$NAME" zm watch "$@" ;;
+  logs)    running || up; if [ "${1:-}" = -f ]; then docker exec -it "$NAME" zm logs -f; else docker exec "$NAME" zm logs; fi ;;
+  console|term|fb|sdl|stop|status)
+           running || up; docker exec -w "$(workdir)" "$NAME" zm "$c" "$@" ;;
+  help|-h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; running && docker exec "$NAME" zm help || true ;;
+  *) echo "sim: unknown command $c" >&2; exit 2 ;;
+esac

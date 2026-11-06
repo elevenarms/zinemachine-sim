@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zine Machine v0 — display simulator (live)</title>
+<style>
+  :root { --bg:#111214; --panel:#1a1c1f; --line:#2a2d31; --text:#d8dadd; --dim:#8a8f96; --accent:#6fb3ff;
+          --ok:#5fd38d; --bad:#ff6b6b; --case:#d9d4c7; --mm:3.78px; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  body { display:grid; grid-template-rows:auto 1fr auto; }
+  header { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; padding:10px 14px;
+    background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:13px; margin:0 8px 0 0; font-weight:600; }
+  button { font:inherit; color:var(--text); background:#0d0e10; border:1px solid var(--line); padding:4px 8px; cursor:pointer; }
+  button:hover { border-color:var(--accent); } button.on { border-color:var(--accent); color:var(--accent); }
+  .grp { display:inline-flex; } .grp button + button { border-left:0; }
+  label { color:var(--dim); display:inline-flex; gap:6px; align-items:center; }
+  .sep { width:1px; height:20px; background:var(--line); }
+  #conn { color:var(--dim); } #conn.ok { color:var(--ok); } #conn.bad { color:var(--bad); }
+
+  main { position:relative; overflow:auto; display:grid; place-items:center; padding:24px; }
+  .device { position:relative; background:var(--case); padding:calc(6*var(--mm)) calc(8*var(--mm));
+    box-shadow:0 1px 0 #fff4 inset, 0 20px 50px #0008; }
+  .device.nocase { background:none; box-shadow:none; padding:0; }
+  .window { width:calc(111.1*var(--mm)); height:calc(37.37*var(--mm)); background:#050505; display:grid; place-items:center;
+    box-shadow:0 0 0 calc(.8*var(--mm)) #b9b3a5, 0 0 0 calc(.8*var(--mm) + 1px) #0004; }
+  .device.nocase .window { box-shadow:none; }
+  .aa { position:relative; width:calc(110.3*var(--mm)); height:calc(36.77*var(--mm)); overflow:hidden; background:#000; }
+  #screen { width:100%; height:100%; }
+  #screen canvas { outline:none; }
+  .aa.pixelated canvas { image-rendering:pixelated; }
+  .grid::after { content:""; position:absolute; inset:0; pointer-events:none;
+    background: repeating-linear-gradient(90deg,#0000 0 calc(var(--px) - 1px),#0003 calc(var(--px) - 1px) var(--px)),
+                repeating-linear-gradient(0deg,#0000 0 calc(var(--px) - 1px),#0003 calc(var(--px) - 1px) var(--px)); }
+  .readout { position:absolute; left:0; right:0; top:calc(100% + 10px); text-align:center; color:var(--dim); font-size:12px; }
+  .calib { display:none; gap:8px; align-items:center; } .calib.show { display:inline-flex; }
+  .card { height:10px; background:var(--accent); }
+
+  footer { display:grid; grid-template-columns:auto 1fr; gap:0 12px; padding:8px 14px; background:var(--panel);
+    border-top:1px solid var(--line); font-size:12px; max-height:34vh; }
+  #state { white-space:nowrap; }
+  #state .running { color:var(--ok); } #state .exited { color:var(--dim); } #state .build-failed { color:var(--bad); }
+  #log { margin:0; overflow:auto; color:var(--dim); white-space:pre-wrap; max-height:calc(34vh - 16px); }
+  #log.hide { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Zine Machine v0 · display simulator</h1>
+  <span id="conn">connecting…</span>
+  <span class="sep"></span>
+  <span class="grp" id="scale">
+    <button data-mode="fit" class="on">Fit</button>
+    <button data-mode="px">1:1 px</button>
+    <button data-mode="mm">Real size</button>
+  </span>
+  <span class="calib" id="calib">Card width 85.6 mm:
+    <input type="range" id="calibRange" min="2" max="8" step="0.01"><span class="card" id="card"></span></span>
+  <label><input type="checkbox" id="caseToggle" checked> Case</label>
+  <label><input type="checkbox" id="gridToggle"> Pixel grid</label>
+  <label><input type="checkbox" id="logToggle" checked> Log</label>
+</header>
+
+<main id="stage">
+  <div class="device" id="device">
+    <div class="window"><div class="aa" id="aa"><div id="screen"></div></div></div>
+    <div class="readout" id="readout"></div>
+  </div>
+</main>
+
+<footer>
+  <div id="state">–</div>
+  <pre id="log"></pre>
+</footer>
+
+<script type="module">
+import RFB from "./novnc/core/rfb.js";
+
+const W = 960, H = 320, AA_W_MM = 110.3;
+const $ = id => document.getElementById(id);
+const root = document.documentElement, aa = $("aa"), stage = $("stage"), device = $("device");
+let mode = "fit", rfb = null;
+const store = { get mm() { return parseFloat(localStorage.getItem("zm.sim.pxPerMm")) || 3.78; },
+                set mm(v) { localStorage.setItem("zm.sim.pxPerMm", v); } };
+
+function pxPerMm() {
+  if (mode === "px") return W / AA_W_MM;
+  if (mode === "mm") return store.mm;
+  const caseOn = !device.classList.contains("nocase");
+  const wmm = 111.1 + 1.6 + (caseOn ? 16 : 0), hmm = 37.37 + 1.6 + (caseOn ? 12 : 0);
+  const r = stage.getBoundingClientRect();
+  return Math.max(1, Math.min((r.width - 48) / wmm, (r.height - 48 - 30) / hmm));
+}
+function layout() {
+  const k = pxPerMm(), s = AA_W_MM * k / W;
+  root.style.setProperty("--mm", k + "px");
+  aa.style.setProperty("--px", s + "px");
+  aa.classList.toggle("pixelated", s >= 1.5);
+  $("readout").textContent = `${W} × ${H} px · RGB565 · ${s.toFixed(2)} screen px per panel px` +
+    (mode === "mm" ? ` · calibrated ${k.toFixed(2)} px/mm` : "");
+  $("card").style.width = 85.6 * store.mm + "px";
+}
+$("scale").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  mode = b.dataset.mode;
+  for (const x of $("scale").children) x.classList.toggle("on", x === b);
+  $("calib").classList.toggle("show", mode === "mm");
+  layout();
+});
+$("calibRange").value = store.mm;
+$("calibRange").addEventListener("input", e => { store.mm = e.target.value; layout(); });
+$("caseToggle").addEventListener("change", e => { device.classList.toggle("nocase", !e.target.checked); layout(); });
+$("gridToggle").addEventListener("change", e => aa.classList.toggle("grid", e.target.checked));
+$("logToggle").addEventListener("change", e => $("log").classList.toggle("hide", !e.target.checked));
+addEventListener("resize", layout);
+new ResizeObserver(layout).observe(stage);   // the log panel growing shrinks the stage
+layout();
+// Page controls never keep the keyboard: keys typed for the device must not toggle them
+// (Space/Enter on a focused button or checkbox would). Hand focus back to the screen.
+for (const el of document.querySelectorAll("header button, header input")) {
+  if (el.tagName === "BUTTON") el.tabIndex = -1;
+  el.addEventListener("mousedown", e => { if (el.type !== "range") e.preventDefault(); });
+  el.addEventListener("change", () => setTimeout(() => rfb && rfb.focus(), 0));
+  el.addEventListener("click", () => setTimeout(() => rfb && rfb.focus(), 0));
+}
+
+// --- the screen (VNC over the same origin's websocket) ---------------------
+function connect() {
+  const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/websockify`;
+  rfb = new RFB($("screen"), url, { shared: true });
+  rfb.scaleViewport = true;          // the canvas follows the active-area box
+  rfb.resizeSession = false;         // the display is fixed at 960x320
+  rfb.focusOnClick = true;
+  rfb.qualityLevel = 9; rfb.compressionLevel = 0;
+  rfb.addEventListener("connect", () => { $("conn").textContent = "live"; $("conn").className = "ok"; rfb.focus(); });
+  rfb.addEventListener("disconnect", () => {
+    $("conn").textContent = "disconnected — retrying"; $("conn").className = "bad";
+    setTimeout(connect, 1500);
+  });
+}
+connect();
+aa.addEventListener("mousedown", () => rfb && rfb.focus());
+
+// --- what is running, and its output ---------------------------------------
+async function poll() {
+  try {
+    const st = await (await fetch("status.json", { cache: "no-store" })).json();
+    const rc = st.rc == null ? "" : ` (exit ${st.rc})`;
+    $("state").innerHTML = `<span class="${st.state}">${st.state}${rc}</span><br>${st.mode}: ${escape(st.cmd)}<br><span style="color:var(--dim)">${escape(st.cwd || "")}</span>`;
+  } catch { $("state").textContent = "–"; }
+  try {
+    const t = await (await fetch("app.log", { cache: "no-store" })).text();
+    const lines = t.split("\n").slice(-60).join("\n");
+    const el = $("log"), atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 4;
+    if (el.textContent !== lines) { el.textContent = lines; if (atEnd) el.scrollTop = el.scrollHeight; }
+  } catch {}
+  setTimeout(poll, 1000);
+}
+function escape(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]); }
+poll();
+</script>
+</body>
+</html>
