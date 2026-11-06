@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zine Machine v0 — display simulator</title>
+<style>
+  :root {
+    --bg: #111214; --panel: #1a1c1f; --line: #2a2d31; --text: #d8dadd; --dim: #8a8f96; --accent: #6fb3ff;
+    --case: #d9d4c7;              /* translucent-resin-ish case colour */
+    --mm: 3.78px;                 /* CSS px per mm; set by JS (fit / 1:1 / physical) */
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  body { display: grid; grid-template-rows: auto 1fr auto; }
+
+  header, footer { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+    padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  footer { border-top: 1px solid var(--line); border-bottom: 0; color: var(--dim); font-size: 12px; }
+  header h1 { font-size: 13px; margin: 0 8px 0 0; font-weight: 600; }
+  label { color: var(--dim); display: inline-flex; gap: 6px; align-items: center; }
+  select, button, input { font: inherit; color: var(--text); background: #0d0e10;
+    border: 1px solid var(--line); padding: 4px 8px; border-radius: 0; }
+  button { cursor: pointer; }
+  button:hover, select:hover { border-color: var(--accent); }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  .grp { display: inline-flex; }
+  .grp button + button { border-left: 0; }
+  .sep { width: 1px; height: 20px; background: var(--line); }
+
+  main { position: relative; overflow: auto; display: grid; place-items: center; padding: 24px; }
+
+  /* The device: case top around the bezel window, all sized in mm via --mm. */
+  .device { position: relative; background: var(--case);
+    padding: calc(6 * var(--mm)) calc(8 * var(--mm));
+    box-shadow: 0 1px 0 #fff4 inset, 0 20px 50px #0008; }
+  .device.nocase { background: none; box-shadow: none; padding: 0; }
+  /* bezel window 111.1 x 37.37 mm (case_v2.py), 0.8 mm chamfer */
+  .window { position: relative; width: calc(111.1 * var(--mm)); height: calc(37.37 * var(--mm));
+    background: #050505; display: grid; place-items: center;
+    box-shadow: 0 0 0 calc(0.8 * var(--mm)) #b9b3a5, 0 0 0 calc(0.8 * var(--mm) + 1px) #0004; }
+  .device.nocase .window { box-shadow: none; }
+  /* active area 110.3 x 36.77 mm = exactly 960 x 320 px */
+  .aa { position: relative; width: calc(110.3 * var(--mm)); height: calc(36.77 * var(--mm)); overflow: hidden; background: #000; }
+  /* the VM page; its canvas is cropped out by offset and scaled to the active area */
+  #vm { position: absolute; border: 0; transform-origin: 0 0; background: #000; }
+  .aa.pixelated #vm { image-rendering: pixelated; }
+  .grid::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background:
+      repeating-linear-gradient(90deg, #0000 0 calc(var(--px) - 1px), #0003 calc(var(--px) - 1px) var(--px)),
+      repeating-linear-gradient(0deg,  #0000 0 calc(var(--px) - 1px), #0003 calc(var(--px) - 1px) var(--px)); }
+
+  .idle { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--dim);
+    font-size: max(11px, calc(2.2 * var(--mm))); }
+  .idle b { color: var(--text); font-weight: 600; }
+
+  .readout { position: absolute; left: 0; right: 0; top: calc(100% + 10px); text-align: center;
+    color: var(--dim); font-size: 12px; }
+  .device.nocase .readout { top: calc(100% + 6px); }
+
+  .calib { display: none; gap: 8px; align-items: center; }
+  .calib.show { display: inline-flex; }
+  .card { height: 10px; background: var(--accent); }
+  dl { display: inline-grid; grid-template-columns: auto auto; gap: 0 8px; margin: 0; }
+  dt { color: var(--dim); } dd { margin: 0; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Zine Machine v0 · display simulator</h1>
+
+  <label>System
+    <select id="image">
+      <option value="alpine-x86-xwin.cfg|x86|256" selected>Alpine Linux x86, X Window</option>
+      <option value="buildroot-riscv64-xwin.cfg|riscv64|256">Buildroot RISC-V 64, X Window</option>
+      <option value="fedora33-riscv-xwin.cfg|riscv64|256">Fedora 33 RISC-V 64, X Window (slow boot)</option>
+    </select>
+  </label>
+  <label>RAM <select id="mem"><option>128</option><option selected>256</option><option>512</option></select> MB</label>
+  <button id="boot">Boot</button>
+  <button id="stop">Power off</button>
+
+  <span class="sep"></span>
+
+  <span class="grp" id="scale">
+    <button data-mode="fit" class="on" title="Fill the window">Fit</button>
+    <button data-mode="px" title="One panel pixel per CSS pixel">1:1 px</button>
+    <button data-mode="mm" title="Real physical size (calibrate once)">Real size</button>
+  </span>
+  <span class="calib" id="calib">
+    Hold a bank card to the screen and drag until the bar is 85.6 mm wide:
+    <input type="range" id="calibRange" min="2" max="8" step="0.01">
+    <span class="card" id="card"></span>
+  </span>
+  <label><input type="checkbox" id="caseToggle" checked> Case</label>
+  <label><input type="checkbox" id="gridToggle"> Pixel grid</label>
+</header>
+
+<main id="stage">
+  <div class="device" id="device">
+    <div class="window">
+      <div class="aa" id="aa">
+        <div class="idle" id="idle"><div><b>4.58″ 960 × 320 bar display</b><br>Pick a system and press Boot.<br>Click the screen to give it the keyboard.</div></div>
+      </div>
+    </div>
+    <div class="readout" id="readout"></div>
+  </div>
+</main>
+
+<footer>
+  <dl>
+    <dt>Panel</dt><dd>4.58″ IPS bar, ST7701S, native 320 × 960 portrait, mounted landscape → 960 × 320</dd>
+    <dt>Active area</dt><dd>110.3 × 36.77 mm · 8.70 px/mm · 221 ppi · bezel window 111.1 × 37.37 mm</dd>
+    <dt>Link</dt><dd>AM6254 DSS VOUT0, parallel RGB565 (the browser shows 24-bit colour)</dd>
+  </dl>
+  <span class="sep"></span>
+  <span>Linux runs in <a href="https://bellard.org/jslinux/" target="_blank" rel="noopener">JSLinux</a> by Fabrice Bellard, emulating x86 / RISC-V, not the PocketBeagle 2's Cortex-A53: use it for layout and UI, not speed.</span>
+</footer>
+
+<script>
+(() => {
+  const W = 960, H = 320;                         // panel pixels, landscape
+  const AA_W_MM = 110.3;                          // active area width
+  const JSL = "https://bellard.org/jslinux/vm.html";
+  // Where vm.html draws its canvas inside its own page (body 8px margin + #term_wrap 20px margin).
+  // Measured in Chrome; adjust if bellard.org's layout changes.
+  const OFF_X = 28, OFF_Y = 20;
+
+  const $ = id => document.getElementById(id);
+  const root = document.documentElement;
+  const aa = $("aa"), stage = $("stage"), device = $("device");
+  let frame = null, mode = "fit";
+
+  const store = {
+    get mm() { return parseFloat(localStorage.getItem("zm.sim.pxPerMm")) || 3.78; },
+    set mm(v) { localStorage.setItem("zm.sim.pxPerMm", v); },
+  };
+
+  // --- scale -------------------------------------------------------------
+  function pxPerMm() {
+    if (mode === "px") return W / AA_W_MM;                       // 960 CSS px across the active area
+    if (mode === "mm") return store.mm;
+    // fit: as large as the stage allows, case included
+    const caseOn = !device.classList.contains("nocase");
+    const wmm = 111.1 + 1.6 + (caseOn ? 16 : 0), hmm = 37.37 + 1.6 + (caseOn ? 12 : 0);
+    const r = stage.getBoundingClientRect();
+    return Math.max(1, Math.min((r.width - 48) / wmm, (r.height - 48 - 30) / hmm));
+  }
+
+  function layout() {
+    const k = pxPerMm();
+    root.style.setProperty("--mm", k + "px");
+    const s = (AA_W_MM * k) / W;                                 // CSS px per panel pixel
+    aa.style.setProperty("--px", s + "px");
+    if (frame) frame.style.transform = `translate(${-OFF_X * s}px, ${-OFF_Y * s}px) scale(${s})`;
+    aa.classList.toggle("pixelated", s >= 2);
+    $("readout").textContent =
+      `${W} × ${H} px · ${s.toFixed(2)} screen px per panel px` +
+      (mode === "mm" ? ` · calibrated ${k.toFixed(2)} px/mm` : "");
+    $("card").style.width = (85.6 * store.mm) + "px";
+  }
+
+  $("scale").addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    mode = b.dataset.mode;
+    for (const x of $("scale").children) x.classList.toggle("on", x === b);
+    $("calib").classList.toggle("show", mode === "mm");
+    layout();
+  });
+  $("calibRange").value = store.mm;
+  $("calibRange").addEventListener("input", e => { store.mm = e.target.value; layout(); });
+  $("caseToggle").addEventListener("change", e => { device.classList.toggle("nocase", !e.target.checked); layout(); });
+  $("gridToggle").addEventListener("change", e => aa.classList.toggle("grid", e.target.checked));
+  addEventListener("resize", layout);
+
+  // --- VM ----------------------------------------------------------------
+  function boot() {
+    stop();
+    const [url, cpu, mem0] = $("image").value.split("|");
+    const mem = $("mem").value || mem0;
+    const q = new URLSearchParams({ cpu, url, mem, graphic: "1", w: W, h: H });
+    frame = document.createElement("iframe");
+    frame.id = "vm";
+    frame.title = "Linux on the bar display";
+    frame.src = `${JSL}?${q}`;
+    // big enough to hold vm.html's canvas at its offset; the .aa box crops the rest
+    frame.width = W + OFF_X + 40; frame.height = H + OFF_Y + 80;
+    frame.allow = "clipboard-read; clipboard-write";
+    $("idle").hidden = true;
+    aa.appendChild(frame);
+    layout();
+    frame.addEventListener("load", () => frame.focus());
+  }
+  function stop() {
+    if (frame) { frame.remove(); frame = null; }
+    $("idle").hidden = false;
+  }
+  $("boot").addEventListener("click", boot);
+  $("stop").addEventListener("click", stop);
+  aa.addEventListener("mousedown", () => frame && frame.focus());
+
+  layout();
+})();
+</script>
+</body>
+</html>
