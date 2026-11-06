@@ -1,0 +1,17 @@
+#!/bin/bash
+# Show every demo on the simulated display in turn (run on the Mac from this folder).
+#   ./playlist [SECONDS_EACH]      default 20; Ctrl-C to stop (the last demo keeps running)
+set -eu
+cd "$(dirname "$0")"
+sim=../../tools/sim/sim
+each=${1:-20}
+docker exec -w /work/software/demos zm-sim make -s
+docker exec -w /work/software/fbdemo zm-sim make -s sim
+while :; do
+  for d in "fb ../fbdemo/bin/fbdemo" "sdl life/bin/life" "term python3 dash/dash.py" "sdl clock/bin/clock"; do
+    echo "▶ $d"
+    # shellcheck disable=SC2086
+    $sim $d
+    sleep "$each"
+  done
+done
