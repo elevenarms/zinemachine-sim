@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential pkg-config gdb libx11-dev libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev \
       inotify-tools procps psmisc python3 ca-certificates curl git less \
       gcc-i686-linux-gnu libc6-dev-i386-cross \
-      htop nano mc tmux cmatrix figlet w3m bc ncal \
+      htop nano mc tmux cmatrix figlet w3m bc ncal x11-apps xdotool x11-xserver-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY zmfb/ /opt/zm/src/zmfb/
