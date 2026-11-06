@@ -7,6 +7,8 @@ You write an app on your laptop, save it, and see it on a pixel-exact 960×320 s
 the browser, drawn inside the device's bezel. Text, raw framebuffer and SDL2 apps all
 work, and the same source builds for the real device.
 
+![fbdemo: demoscene effects on the raw framebuffer](docs/img/fbdemo.gif)
+
 Hardware (PCB, case, panel) lives in [zinemachine0](https://github.com/elevenarms/zinemachine0).
 This repo was split out of it with history and keeps the same paths (`tools/sim`,
 `software/…`), so code and docs work in either one.
@@ -74,15 +76,42 @@ Build them once inside the container (`tools/sim/sim shell`, then
 
 | Command (from `software/demos`) | What it is |
 |---|---|
-| `../../tools/sim/sim fb ../fbdemo/bin/fbdemo` | demoscene effects on the raw framebuffer |
+| `../../tools/sim/sim fb ../fbdemo/bin/fbdemo` | demoscene effects on the raw framebuffer (top of this page) |
 | `../../tools/sim/sim sdl life/bin/life` | Game of Life, 240×80 cells, coloured by age |
 | `../../tools/sim/sim sdl clock/bin/clock` | big LED-pixel clock |
 | `../../tools/sim/sim sdl eyechart/bin/eyechart` | console font sizes on the real panel, to pick a readable one |
-| `../../tools/sim/sim term python3 dash/dash.py` | curses text dashboard |
+| `../../tools/sim/sim term -s 16 python3 dash/dash.py` | curses text dashboard |
 | `../../tools/sim/sim term python3 chat/chat.py` | a scripted agent-CLI conversation at 60×10 |
 | `../../tools/sim/sim sdl wordproc/run.sh` | a word processor that types Shakespeare while xeyes watches the cursor |
 | `../../tools/sim/sim term python3 exetui/exetui.py --demo` | an [exe.dev](https://exe.dev) VM manager TUI. It uses a built-in emulator by default; set `EXE_TOKEN` to use the live API. |
 | `./playlist [SECONDS]` | cycles through the demos |
+
+All of these were recorded from the running simulator; every frame is the display's own
+960×320 pixels, except fbdemo, which is scaled to 640 px wide.
+
+**Text at 32 px: an agent CLI, a word processor, a TUI over a web API**
+
+![chat: a scripted agent conversation at 60x10](docs/img/chat.gif)
+
+![ZineWrite typing Sonnet 18 while xeyes follows the cursor](docs/img/wordproc.gif)
+
+![exetui: exe.dev VM manager](docs/img/exetui.gif)
+
+**SDL2**
+
+![Game of Life, 240x80 cells](docs/img/life.gif)
+
+![LED pixel clock](docs/img/clock.gif)
+
+**Smaller fonts: a 16 px dashboard, and the eye chart used to choose 32 px**
+
+![curses dashboard at 120x20](docs/img/dash.gif)
+
+![console font eye chart](docs/img/eyechart.gif)
+
+To record your own app, start it with `sim` and run
+`docs/capture.sh OUT.gif SECONDS [FPS] [WIDTH]`. It grabs X frames inside the
+container with `xwd` and builds the GIF with ffmpeg on the host (`brew install ffmpeg`).
 
 ## How close to the device is it?
 
@@ -111,6 +140,7 @@ site/display-sim/     JSLinux-in-the-browser simulator (one HTML file)
 software/fbdemo/      framebuffer demo (also cross-builds for the device)
 software/examples/    sdl2-bar: minimal SDL2 starting point
 software/demos/       the demos above
+docs/capture.sh       records the display to a GIF; docs/img/ holds the README's GIFs
 ```
 
 ## License
