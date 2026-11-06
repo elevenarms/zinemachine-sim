@@ -5,6 +5,7 @@
 #   ../../tools/sim/sim sdl eyechart/bin/eyechart   font sizes on the panel (pick a console font)
 #   ../../tools/sim/sim term python3 chat/chat.py   simulated Claude Code-style session (60x10)
 #   ../../tools/sim/sim sdl wordproc/run.sh       ZineWrite types Shakespeare, xeyes watch the cursor
+#   ../../tools/sim/sim term python3 exetui/exetui.py --demo   exe.dev VM manager (SIM backend; EXE_TOKEN for live)
 #   ./playlist                                  all of them (and fbdemo) in turn
 CFLAGS ?= -O2 -Wall -Wextra
 SDL    = $(shell pkg-config --cflags --libs sdl2)
