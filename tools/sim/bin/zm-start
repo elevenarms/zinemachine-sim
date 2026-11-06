@@ -13,8 +13,10 @@ for _ in $(seq 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
 # No window manager: every app window is 960x320 at 0,0 (a WM's fullscreen handshake hung
 # SDL2's SDL_WINDOW_FULLSCREEN*), and the default PointerRoot focus sends keys to it.
 
+# -xdamage: send exactly what X redrew. Polling (-noxdamage) samples scanlines and left
+# stale fragments of small text changes on screen.
 x11vnc -display :0 -localhost -rfbport 5900 -forever -shared -nopw -quiet \
-       -noxrecord -noxfixes -noxdamage -wait 8 -defer 8 >/tmp/zm/vnc.log 2>&1 &
+       -noxrecord -noxfixes -xdamage -wait 5 -defer 5 >/tmp/zm/vnc.log 2>&1 &
 
 websockify --web /opt/zm/www 6080 localhost:5900 >/tmp/zm/web.log 2>&1 &
 

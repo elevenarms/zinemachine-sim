@@ -3,6 +3,7 @@
 #   ../../tools/sim/sim sdl clock/bin/clock     big LED pixel clock
 #   ../../tools/sim/sim term python3 dash/dash.py   text-mode dashboard (curses, 120x20)
 #   ../../tools/sim/sim sdl eyechart/bin/eyechart   font sizes on the panel (pick a console font)
+#   ../../tools/sim/sim term python3 chat/chat.py   simulated Claude Code-style session (60x10)
 #   ./playlist                                  all of them (and fbdemo) in turn
 CFLAGS ?= -O2 -Wall -Wextra
 SDL    = $(shell pkg-config --cflags --libs sdl2)
